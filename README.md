@@ -18,8 +18,10 @@ show them as (partial) 360° panoramas.
 
 ## Download
 
-A standalone Windows build (no Python needed) is attached to the
-[GitHub releases](https://github.com/Montago/PanoStitchPy/releases): unzip and run `PanoStitch.exe`.
+The [GitHub releases](https://github.com/Montago/PanoStitchPy/releases) have:
+- `PanoStitch-<version>-win64.zip` – standalone Windows build, no Python needed: unzip and run `PanoStitch.exe`.
+- `PanoStitch-<version>-portable.zip` – the program for an installed Python (small download): unzip, run
+  `Installer.bat` once, then `PanoStitch.bat`.
 
 ## Running from source
 
@@ -59,7 +61,9 @@ Run any script with `--help` for its options.
 python tools/build_release.py
 ```
 Builds `dist/PanoStitch/PanoStitch.exe` with PyInstaller (from `PanoStitch.spec`), adds the third-party
-licenses and a short README, and zips it as `dist/PanoStitch-<version>-win64.zip`.
+licenses and a short README, and zips it as `dist/PanoStitch-<version>-win64.zip`. It also writes
+`dist/PanoStitch-<version>-portable.zip` with the sources, batch files and README for an installed Python.
+`--selftest <panorama folder>` stitches a panorama with the built exe as a check.
 
 ## How it works
 

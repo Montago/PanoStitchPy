@@ -1,8 +1,11 @@
-"""Build the Windows release: PanoStitch.exe (PyInstaller), third-party licenses, README, zip.
+"""Build the Windows release: PanoStitch.exe (PyInstaller), third-party licenses, README, zips.
 
 usage: python tools/build_release.py [--skip-build] [--selftest <panorama folder>]
 
-Output: dist/PanoStitch/ (the program folder) and dist/PanoStitch-<version>-win64.zip
+Output in dist/:
+  PanoStitch/                        the standalone program folder
+  PanoStitch-<version>-win64.zip     that folder zipped (no Python needed)
+  PanoStitch-<version>-portable.zip  the source program for an installed Python (Installer.bat + PanoStitch.bat)
 """
 from __future__ import annotations
 
@@ -82,9 +85,33 @@ def collect_licenses(target: Path) -> None:
     (target / "THIRD_PARTY_NOTICES.txt").write_text("\n".join(lines), encoding="utf-8")
 
 
+PORTABLE_FILES = ["PanoStitch.bat", "Installer.bat", "requirements.txt"]
+PORTABLE_DIRS = ["app", "panostitch"]
+
+
+def build_portable_zip() -> Path:
+    """Zip of the program sources for running on an installed Python (no build step involved)."""
+    zip_path = DIST / f"PanoStitch-{__version__}-portable.zip"
+    top = Path("PanoStitch-portable")
+    readme = (ROOT / "packaging" / "README-portable.txt").read_text(encoding="utf-8").replace("{version}", __version__)
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        for d in PORTABLE_DIRS:
+            for f in sorted((ROOT / d).rglob("*")):
+                if f.is_file() and "__pycache__" not in f.parts:
+                    zf.write(f, top / f.relative_to(ROOT))
+        for name in PORTABLE_FILES:
+            text = (ROOT / name).read_text(encoding="utf-8")
+            if name.endswith(".bat"):  # cmd.exe needs Windows line endings
+                text = text.replace("\r\n", "\n").replace("\n", "\r\n")
+            zf.writestr(str(top / name), text)
+        zf.writestr(str(top / "README.txt"), readme.replace("\r\n", "\n").replace("\n", "\r\n"))
+        zf.write(ROOT / "LICENSE", top / "LICENSE.txt")
+    return zip_path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--skip-build", action="store_true", help="reuse dist/PanoStitch, only redo licenses and zip")
+    ap.add_argument("--skip-build", action="store_true", help="reuse dist/PanoStitch, only redo licenses and zips")
     ap.add_argument("--selftest", type=Path, help="stitch this panorama folder with the built exe as a test")
     args = ap.parse_args()
 
@@ -112,6 +139,8 @@ def main() -> None:
             if f.is_file():
                 zf.write(f, Path("PanoStitch") / f.relative_to(APP_DIR))
     print(f"{zip_path} ({zip_path.stat().st_size / 2**20:.0f} MB)")
+    portable = build_portable_zip()
+    print(f"{portable} ({portable.stat().st_size / 2**10:.0f} KB)")
 
 
 if __name__ == "__main__":
