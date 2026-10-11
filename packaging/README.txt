@@ -24,6 +24,8 @@ HOW TO USE
    and shown next to each panorama in the list.
 3. The result is saved as <date>_<folder>_<type>.jpg in the "Save to" folder
    (default: Pictures\PanoStitch) and shown in the built-in 360° viewer.
+4. Try the views "Tiny planet" and "Inverted" above the viewer: drag sideways to turn, up/down to tilt,
+   scroll to zoom. "Save view..." saves what is inside the frame as a high-resolution image.
 
 Time per 360° panorama (33 images): Fast approx. 3 min, Standard approx. 4 min, High approx. 10 min.
 

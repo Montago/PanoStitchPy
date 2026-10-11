@@ -9,15 +9,17 @@ import cv2
 import numpy as np
 from PySide6.QtCore import QSettings, QStandardPaths, Qt, QThread
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QImage, QPixmap
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox,
+                               QHBoxLayout, QLabel,
                                QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
                                QProgressBar, QPushButton, QSizePolicy, QSplitter, QTabWidget, QToolButton,
                                QVBoxLayout, QWidget)
 
 from panostitch import __version__
-from panostitch.imageio import imread
+from panostitch.imageio import imread, imwrite
 from panostitch.metadata import read_xmp
 from panostitch.pipeline import Options, PanoramaSet, find_panorama_sets
+from panostitch.views import VIEW_MODES
 from panostitch.xmp import read_gpano
 
 from .viewer import PanoViewer
@@ -40,6 +42,14 @@ TYPES = [
     ("Vertical  –  3 images", "vertical"),
 ]
 VIEW_MAX_WIDTH = 8192  # larger panoramas are shrunk for the on-screen viewer only
+EXPORT_FORMATS = [
+    ("Window shape", None),
+    ("Square 1:1", 1.0),
+    ("Portrait 4:5", 4 / 5),
+    ("Landscape 16:9", 16 / 9),
+    ("Portrait 9:16", 9 / 16),
+]
+EXPORT_SIZES = [("2048 px", 2048), ("4096 px", 4096), ("8192 px", 8192)]
 
 ROLE_SET = Qt.UserRole
 ROLE_OUTPUT = Qt.UserRole + 1
@@ -228,10 +238,49 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.viewer = PanoViewer()
         self.flat = FlatView()
-        self.tabs.addTab(self.viewer, "360° view")
+        self.tabs.addTab(self._build_view_tab(), "360° view")
         self.tabs.addTab(self.flat, "Flat image")
         v.addWidget(self.tabs, 1)
         return panel
+
+    def _build_view_tab(self) -> QWidget:
+        """The 360 viewer with its view mode and 'save view' controls above it."""
+        page = QWidget()
+        v = QVBoxLayout(page)
+        v.setContentsMargins(0, 4, 0, 0)
+        row = QHBoxLayout()
+        row.addWidget(QLabel("View:"))
+        self.cmb_view = QComboBox()
+        for key, mode in VIEW_MODES.items():
+            self.cmb_view.addItem(mode.label, key)
+        self.cmb_view.setToolTip("Normal: look around as with a camera.\n"
+                                 "Tiny planet: the ground in the middle, curved into a small planet.\n"
+                                 "Inverted: the sky in the middle with the ground around it.")
+        self.cmb_view.currentIndexChanged.connect(lambda _i: self.viewer.set_mode(self.cmb_view.currentData()))
+        row.addWidget(self.cmb_view)
+        row.addSpacing(16)
+        row.addWidget(QLabel("Save as:"))
+        self.cmb_format = QComboBox()
+        for label, aspect in EXPORT_FORMATS:
+            self.cmb_format.addItem(label, aspect)
+        self.cmb_format.setToolTip("Shape of the saved image. The part that will be saved is framed in the view.")
+        self.cmb_format.currentIndexChanged.connect(
+            lambda _i: self.viewer.set_export_aspect(self.cmb_format.currentData()))
+        row.addWidget(self.cmb_format)
+        self.cmb_size = QComboBox()
+        for label, size in EXPORT_SIZES:
+            self.cmb_size.addItem(label, size)
+        self.cmb_size.setCurrentIndex(1)
+        self.cmb_size.setToolTip("Length of the longest side of the saved image")
+        row.addWidget(self.cmb_size)
+        self.btn_save_view = QPushButton("Save view…")
+        self.btn_save_view.setEnabled(False)
+        self.btn_save_view.clicked.connect(self.save_view)
+        row.addWidget(self.btn_save_view)
+        row.addStretch(1)
+        v.addLayout(row)
+        v.addWidget(self.viewer, 1)
+        return page
 
     # ------------------------------------------------------------------ folders
     def choose_folder(self) -> None:
@@ -425,6 +474,7 @@ class MainWindow(QMainWindow):
         sphere = self._as_sphere(img, read_gpano(read_xmp(path)))
         self.viewer.set_image(sphere)
         self.flat.set_image(img)
+        self.btn_save_view.setEnabled(sphere is not None)
         self.tabs.setTabEnabled(0, sphere is not None)
         self.tabs.setTabToolTip(0, "" if sphere is not None else
                                 "This image is not a 360° panorama (e.g. a vertical panorama) – see 'Flat image'")
@@ -434,16 +484,43 @@ class MainWindow(QMainWindow):
         self.btn_show.setEnabled(True)
         self.lbl_viewing.setText(f"{path.name}  ({w} × {h})")
 
+    def save_view(self) -> None:
+        """Save what the 360 view shows (inside the export frame), rendered from the full-resolution panorama."""
+        if not self._last_output or not self.viewer.has_image():
+            return
+        mode = self.cmb_view.currentData()
+        default = self._last_output.with_name(f"{self._last_output.stem}_{mode}.jpg")
+        path, _ = QFileDialog.getSaveFileName(self, "Save view", str(default), "JPEG (*.jpg);;PNG (*.png)")
+        if not path:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.lbl_status.setText("Saving view…")
+        QApplication.processEvents()
+        try:
+            img = imread(self._last_output)
+            sphere = self._as_sphere(img, read_gpano(read_xmp(self._last_output)), max_width=None)
+            out = self.viewer.export(sphere, self.cmb_size.currentData())
+            params = [cv2.IMWRITE_JPEG_QUALITY, 95] if Path(path).suffix.lower() in (".jpg", ".jpeg") else []
+            imwrite(path, out, params)
+            self.lbl_status.setText(f"Saved {Path(path).name} ({out.shape[1]} × {out.shape[0]})")
+            self.txt_log.appendPlainText(f"Saved view: {path}")
+        except Exception as e:  # e.g. out of memory at 8192 px
+            QMessageBox.warning(self, "PanoStitch", f"Could not save the view:\n{e}")
+            self.lbl_status.setText("Ready")
+        finally:
+            QApplication.restoreOverrideCursor()
+
     @staticmethod
-    def _as_sphere(img: np.ndarray, gpano: dict | None) -> np.ndarray | None:
+    def _as_sphere(img: np.ndarray, gpano: dict | None, max_width: int | None = VIEW_MAX_WIDTH) -> np.ndarray | None:
         """A full equirectangular image for the 360 viewer: the image itself, a cropped panorama placed on an
-        otherwise black sphere using its GPano metadata, or None if it cannot be shown in 360."""
+        otherwise black sphere using its GPano metadata, or None if it cannot be shown in 360. Shrunk to
+        max_width unless that is None."""
         h, w = img.shape[:2]
         if gpano is None:
             if abs(w - 2 * h) > 2:
                 return None
             gpano = {"full_w": w, "full_h": h, "crop_w": w, "crop_h": h, "left": 0, "top": 0}
-        f = min(1.0, VIEW_MAX_WIDTH / gpano["full_w"])
+        f = 1.0 if max_width is None else min(1.0, max_width / gpano["full_w"])
         if gpano["crop_w"] == gpano["full_w"] and gpano["crop_h"] == gpano["full_h"]:
             return img if f == 1.0 else cv2.resize(img, (int(w * f), int(h * f)), interpolation=cv2.INTER_AREA)
         full_w, full_h = int(gpano["full_w"] * f), int(gpano["full_h"] * f)

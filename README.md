@@ -39,6 +39,10 @@ On Windows you can also double-click `Installer.bat` once and then `PanoStitch.b
 2. Choose type, quality and exposure. The defaults are good.
 3. Press **Stitch**. The result is saved as `<date>_<folder>_<type>.jpg` (by default in `Pictures\PanoStitch`).
 4. Look at the result in the built-in 360° viewer (drag to look around, scroll to zoom).
+5. Switch the view to **Tiny planet** (the ground curved into a small planet) or **Inverted** (the sky in the
+   middle, the ground around it). Drag sideways to turn, up/down to tilt towards a normal view, scroll to make
+   the planet smaller or bigger. **Save view…** writes what is inside the frame (window shape, 1:1, 4:5, 16:9
+   or 9:16) at up to 8192 px, rendered from the full-resolution panorama.
 
 If images are missing (e.g. the drone stopped early), those areas are left black.
 
@@ -86,6 +90,7 @@ panostitch/
   blend.py         gain compensation, graph-cut seams, wrap-around multi-band blending
   zenith.py        filling the sky above the drone
   xmp.py           GPano metadata
+  views.py         normal, tiny planet and inverted (stereographic) views of a 360° panorama, and their export
   pipeline.py      the whole pipeline as library calls (progress + cancel), used by the app and the scripts
   imageio.py       image I/O that works with non-ASCII Windows paths
   render.py        simple previews for the step scripts
