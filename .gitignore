@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- PanoStichPy ---
+# Drone photos and stitched results: large, and the photos carry GPS positions in their metadata
+input/
+output/
+# Keep the PyInstaller build recipe (the Python template above ignores *.spec)
+!PanoStitch.spec
