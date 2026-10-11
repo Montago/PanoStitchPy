@@ -51,7 +51,7 @@ def write_pano_jpeg(path: Path | str, img: np.ndarray, gpano: dict | None, quali
     """Write a JPEG, with GPano metadata when given (None: an ordinary flat image)."""
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
     if not ok:
-        raise IOError(f"Kunne ikke kode JPEG: {path}")
+        raise IOError(f"Could not encode JPEG: {path}")
     data = buf.tobytes()
     Path(path).write_bytes(insert_xmp(data, gpano_xmp(gpano)) if gpano else data)
 

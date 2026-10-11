@@ -18,12 +18,12 @@ from .camera import Camera
 from .projection import Canvas, build_maps
 
 PANO_TYPES = {
-    "sphere": "360° kugle",
+    "sphere": "360° sphere",
     "180": "180° panorama",
-    "wide": "Vidvinkel",
-    "vertical": "Lodret",
+    "wide": "Wide angle",
+    "vertical": "Vertical",
 }
-OUTPUT_SUFFIX = {"sphere": "360", "180": "180", "wide": "vidvinkel", "vertical": "lodret"}
+OUTPUT_SUFFIX = {"sphere": "360", "180": "180", "wide": "wide", "vertical": "vertical"}
 
 
 def _columns(yaws: list[float], tol: float = 6.0) -> list[float]:
@@ -103,7 +103,7 @@ def plan_canvas(cams: list[Camera], pano_type: str, deg_per_px: float, sphere_wi
     cols = np.where(cov[mid].any(axis=0))[0]
     rows = np.where(cov.any(axis=1))[0]
     if len(cols) == 0 or len(rows) == 0:
-        raise ValueError("Billederne dækker ikke noget område – er vinklerne i metadataen gyldige?")
+        raise ValueError("The images do not cover any area – are the angles in the metadata valid?")
     step = 360.0 / 720
     lon_left = max(-180.0, lon[cols.min()] - step / 2 - margin_deg)
     lon_right = min(180.0, lon[cols.max()] + step / 2 + margin_deg)

@@ -5,7 +5,7 @@
     stitch() : align + blend + write a 360 JPEG with GPano metadata
 
 `progress(fraction, message)` receives 0..1 for the call it was passed to; `cancelled()` is polled between
-images and raises Cancelled when it returns True. User-facing messages are in Danish (they end up in the GUI).
+images and raises Cancelled when it returns True. Progress and log messages are user-facing (they end up in the GUI).
 """
 from __future__ import annotations
 
@@ -88,11 +88,11 @@ class PanoramaSet:
 
     @property
     def label(self) -> str:
-        when = self.taken.strftime("%d-%m-%Y %H:%M") if self.taken else "ukendt tidspunkt"
+        when = self.taken.strftime("%d-%m-%Y %H:%M") if self.taken else "unknown time"
         kind = PANO_TYPES[self.pano_type]
         if self.pano_type in ("180", "wide"):
-            kind += f" (ca. {self.coverage_deg:.0f}°)"
-        return f"{self.folder.name} — {kind} · {self.count} billeder · {self.model or 'ukendt kamera'} · {when}"
+            kind += f" (approx. {self.coverage_deg:.0f}°)"
+        return f"{self.folder.name} — {kind} · {self.count} images · {self.model or 'unknown camera'} · {when}"
 
     def default_output_name(self, pano_type: str | None = None) -> str:
         stamp = self.taken.strftime("%Y-%m-%d_%H%M_") if self.taken else ""
@@ -163,9 +163,9 @@ def align(folder: Path, opt: Options, progress: ProgressFn = _noop, cancelled: C
           log: LogFn = _noop) -> AlignResult:
     shots = read_folder(folder)
     if len(shots) < 2:
-        raise ValueError(f"Fandt kun {len(shots)} billede(r) i {folder}")
+        raise ValueError(f"Found only {len(shots)} image(s) in {folder}")
     if all(s.focal_35mm == 0 for s in shots):
-        raise ValueError("Billederne mangler brændvidde i EXIF – er det originalbillederne fra dronen?")
+        raise ValueError("The images have no focal length in EXIF – are they the original images from the drone?")
     cams = [Camera.from_shot(s) for s in shots]
     n = len(cams)
 
@@ -173,7 +173,7 @@ def align(folder: Path, opt: Options, progress: ProgressFn = _noop, cancelled: C
     for k, c in enumerate(cams):
         if cancelled():
             raise Cancelled
-        progress(0.25 * k / n, f"Finder kendetegn i billede {k + 1} af {n}")
+        progress(0.25 * k / n, f"Finding features in image {k + 1} of {n}")
         feats.append(detect(c.meta.path, cache_dir=opt.cache_dir))
 
     pairs = candidate_pairs(cams)
@@ -183,11 +183,11 @@ def align(folder: Path, opt: Options, progress: ProgressFn = _noop, cancelled: C
         if cancelled():
             raise Cancelled
         if k % 5 == 0:
-            progress(0.25 + 0.25 * k / len(pairs), f"Matcher overlappende billeder ({k + 1} af {len(pairs)})")
+            progress(0.25 + 0.25 * k / len(pairs), f"Matching overlapping images ({k + 1} of {len(pairs)})")
         m = match_pair(cams, feats, i, j, max_matches=opt.max_matches, rng=rng)
         if m is not None:
             matches.append(m)
-    log(f"{len(matches)} af {len(pairs)} billedpar matchet")
+    log(f"{len(matches)} of {len(pairs)} image pairs matched")
     linked = np.zeros(n, int)
     for m in matches:
         linked[m.i] += 1
@@ -198,7 +198,7 @@ def align(folder: Path, opt: Options, progress: ProgressFn = _noop, cancelled: C
         positions = positions_world(shots)
         ground_h = float(np.mean([s.relative_altitude for s in shots]))
         if ground_h <= 5:
-            log("Flyvehøjden er ukendt eller meget lav – slår parallakse-korrektion fra")
+            log("Flight altitude unknown or very low – parallax correction disabled")
             positions = None
 
     neighbors = candidate_pairs(cams, max_angle_deg=50.0)
@@ -206,7 +206,7 @@ def align(folder: Path, opt: Options, progress: ProgressFn = _noop, cancelled: C
     for attempt in range(3):
         if cancelled():
             raise Cancelled
-        progress(0.5 + 0.15 * attempt, "Optimerer kameravinkler (kan tage et par minutter)")
+        progress(0.5 + 0.15 * attempt, "Optimising camera angles (may take a few minutes)")
         ba = bundle_adjust(cams, matches, neighbors=neighbors, positions=positions, ground_h=ground_h,
                            fit_positions=opt.parallax == "fit" and positions is not None,
                            position_sigma_m=opt.position_sigma, verbose=False)
@@ -214,13 +214,13 @@ def align(folder: Path, opt: Options, progress: ProgressFn = _noop, cancelled: C
         if not len(bad):
             break
         for k in bad:
-            log(f"Ignorerer usikre matches for {cams[k].meta.name} ({np.abs(ba.omega_deg[k]).max():.1f}°)")
+            log(f"Ignoring unreliable matches for {cams[k].meta.name} ({np.abs(ba.omega_deg[k]).max():.1f}°)")
         ignored += [int(k) for k in bad]
         matches = [m for m in matches if m.i not in bad and m.j not in bad]
 
     after = np.array(list(ba.pair_rms_after.values()))
-    log(f"Justering færdig: median fejl mellem billeder {np.median(after):.1f} px")
-    progress(1.0, "Justering færdig")
+    log(f"Alignment done: median error between images {np.median(after):.1f} px")
+    progress(1.0, "Alignment done")
     return AlignResult(shots, cams, ba.cams, ba, linked, len(pairs), len(matches), ignored)
 
 
@@ -289,7 +289,7 @@ def blend(cams: list[Camera], opt: Options, canvas: Canvas, progress: ProgressFn
     for k, cam in enumerate(cams):
         if cancelled():
             raise Cancelled
-        progress(0.12 * k / n, f"Forbereder billede {k + 1} af {n}")
+        progress(0.12 * k / n, f"Preparing image {k + 1} of {n}")
         img, sc = _load_scaled(cam, opt.seam_width)
         mx, my, valid = build_maps(sc, rays)
         warped_lo.append(cv2.remap(img, mx, my, cv2.INTER_LINEAR))
@@ -304,11 +304,11 @@ def blend(cams: list[Camera], opt: Options, canvas: Canvas, progress: ProgressFn
                 or list(range(n))
             gains /= np.exp(np.log(gains[ref]).mean(axis=0))
         stops = np.log2(gains @ np.array([0.114, 0.587, 0.299]))
-        log(f"Eksponering udlignet: {stops.min():+.2f} til {stops.max():+.2f} stop")
+        log(f"Exposure balanced: {stops.min():+.2f} to {stops.max():+.2f} stops")
     for k in range(n):
         warped_lo[k] = apply_gain(warped_lo[k], gains[k])
 
-    progress(0.12, "Finder de bedste sømme mellem billederne")
+    progress(0.12, "Finding the best seams between the images")
     labels_lo = find_seams(warped_lo, valid_lo, weight_lo, opt.seams)
     del warped_lo, valid_lo, weight_lo
 
@@ -321,7 +321,7 @@ def blend(cams: list[Camera], opt: Options, canvas: Canvas, progress: ProgressFn
     for k, cam in enumerate(cams):
         if cancelled():
             raise Cancelled
-        progress(0.2 + 0.2 * k / n, f"Lægger sømme i fuld opløsning ({k + 1} af {n})")
+        progress(0.2 + 0.2 * k / n, f"Placing seams at full resolution ({k + 1} of {n})")
         sc = cam.scaled(_source_scale(cam, sphere_equiv))
         mx, my, valid = build_maps(sc, rays)
         w = feather_weight(sc, mx, my, valid)
@@ -338,7 +338,7 @@ def blend(cams: list[Camera], opt: Options, canvas: Canvas, progress: ProgressFn
     for k, cam in enumerate(cams):
         if cancelled():
             raise Cancelled
-        progress(0.4 + 0.5 * k / n, f"Blender billede {k + 1} af {n}")
+        progress(0.4 + 0.5 * k / n, f"Blending image {k + 1} of {n}")
         mask = (labels == k).astype(np.float32)
         if not mask.any():
             continue
@@ -347,7 +347,7 @@ def blend(cams: list[Camera], opt: Options, canvas: Canvas, progress: ProgressFn
         warped = cv2.remap(img, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
         blender.feed(apply_gain(warped, gains[k]), mask)
     del rays
-    progress(0.9, "Samler panoramaet")
+    progress(0.9, "Assembling the panorama")
     pano, covered = blender.result()
     del blender
     pano = np.clip(pano, 0, 255).astype(np.uint8)
@@ -356,15 +356,15 @@ def blend(cams: list[Camera], opt: Options, canvas: Canvas, progress: ProgressFn
     if canvas.is_full_sphere:
         lat = canvas.lats()
         coverage = float((covered * np.cos(lat)[:, None]).sum() / (np.cos(lat).sum() * W))
-        log(f"Billederne dækker {coverage * 100:.0f} % af kuglen")
+        log(f"The images cover {coverage * 100:.0f} % of the sphere")
         if opt.fill_zenith and not covered[0].all():
             region = zenith_hole(covered)
             if region is not None:
-                progress(0.95, "Udfylder himlen over dronen")
+                progress(0.95, "Filling in the sky above the drone")
                 pano = fill_zenith(pano, covered, region)
             else:
-                log("Hullet i himlen er større end normalt (mangler der billeder?) – det efterlades sort")
-    progress(1.0, "Blending færdig")
+                log("The gap in the sky is larger than usual (are images missing?) – it is left black")
+    progress(1.0, "Blending done")
     return BlendResult(canvas, pano, covered, labels, gains)
 
 
@@ -394,26 +394,26 @@ def choose_canvas(aligned: AlignResult, opt: Options, log: LogFn = _noop) -> tup
     pano_type = opt.pano_type
     if pano_type == "auto":
         pano_type = detect_type([s.gimbal_yaw for s in aligned.shots])
-        log(f"Panoramatype genkendt: {PANO_TYPES[pano_type]}")
+        log(f"Panorama type detected: {PANO_TYPES[pano_type]}")
     canvas = plan_canvas(aligned.cams, pano_type, 360.0 / opt.width, opt.width)
     if canvas.is_full_sphere and opt.center_yaw is not None:
         canvas = Canvas.full_sphere(opt.width, opt.center_yaw)
     if not canvas.is_full_sphere:
-        log(f"Udsnit: {canvas.lon_span:.0f}° × {canvas.lat_top - canvas.lat_bottom:.0f}°"
-            f"{' (lodret)' if canvas.portrait else ''}")
+        log(f"Extent: {canvas.lon_span:.0f}° × {canvas.lat_top - canvas.lat_bottom:.0f}°"
+            f"{' (vertical)' if canvas.portrait else ''}")
     return pano_type, canvas
 
 
 def stitch(folder: Path, out_path: Path, opt: Options, progress: ProgressFn = _noop, cancelled: CancelFn = _never,
            log: LogFn = _noop) -> Path:
-    log(f"Stitcher {folder}")
+    log(f"Stitching {folder}")
     aligned = align(folder, opt, _sub(progress, 0.0, 0.45), cancelled, log)
     _, canvas = choose_canvas(aligned, opt, log)
     result = blend(aligned.cams, opt, canvas, _sub(progress, 0.45, 0.97), cancelled, log)
-    progress(0.98, "Beskærer og gemmer")
+    progress(0.98, "Cropping and saving")
     pano, gpano = finish(result, opt)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     write_pano_jpeg(out_path, pano, gpano, quality=opt.jpeg_quality)
-    log(f"Gemt: {out_path} ({pano.shape[1]} × {pano.shape[0]})")
-    progress(1.0, "Færdig")
+    log(f"Saved: {out_path} ({pano.shape[1]} × {pano.shape[0]})")
+    progress(1.0, "Done")
     return out_path

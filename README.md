@@ -1,94 +1,110 @@
-# PanoStichPy
+# PanoStitch
 
-Stitching af DJI Air 3-panoramaer fra de originale enkeltbilleder:
+Stitches the original single images from DJI drone panorama modes into one panorama, with a simple Windows
+desktop app and a built-in 360° viewer. Developed and tested with the DJI Air 3.
 
-| Type | Billeder | Resultat |
+| Type | Images | Result |
 |---|---|---|
-| 360° kugle | 33 | 360×180 equirectangular med GPano-metadata og udfyldt himmel |
-| 180° panorama | 21 | ca. 270×100°, beskåret equirectangular med GPano "cropped area" |
-| Vidvinkel | 9 | ca. 130×110°, beskåret equirectangular med GPano "cropped area" |
-| Lodret | 3 | højt billede i transvers projektion (kan gå helt ned under dronen) |
+| 360° sphere | 33 | Full 360×180° equirectangular image with GPano metadata; the sky above the drone is filled in |
+| 180° panorama | 21 | Approx. 270×100°, cropped equirectangular with GPano "cropped area" metadata |
+| Wide angle | 9 | Approx. 130×110°, cropped equirectangular with GPano "cropped area" metadata |
+| Vertical | 3 | Tall image in a transverse projection (can reach straight down below the drone) |
 
-Typen genkendes automatisk ud fra billedernes vinkler (eller vælges i programmet). Dronen tager første
-billede i den retning/hældning piloten peger, og de øvrige rundt om det.
+The type is detected automatically from the angles of the images (or chosen in the app). The drone takes the
+first image in the direction and tilt the pilot points at, and the others around it.
 
-## Setup
+360°, 180° and wide-angle results carry GPano metadata, so Facebook, Google Photos, Kuula, VR headsets etc.
+show them as (partial) 360° panoramas.
+
+## Download
+
+A standalone Windows build (no Python needed) is attached to the
+[GitHub releases](https://github.com/Montago/PanoStitchPy/releases): unzip and run `PanoStitch.exe`.
+
+## Running from source
+
+Requires Python 3.11+ (developed with 3.13).
+
 ```
 python -m pip install -r requirements.txt
+python app/main.py
 ```
 
-## Program (anbefalet)
-Dobbeltklik på **`PanoStitch.bat`** (eller `python app/main.py`).
+On Windows you can also double-click `Installer.bat` once and then `PanoStitch.bat`.
 
-1. Vælg en panorama-mappe – eller hele `PANORAMA`-mappen fra SD-kortet, så findes alle panoramaer.
-   Man kan også trække en mappe ind i vinduet.
-2. Vælg kvalitet og lys. Standardindstillingerne er gode.
-3. Tryk **Stitch**. Resultatet gemmes som `<dato>_<mappe>_360.jpg` (default i `Billeder\PanoStitch`) med
-   360-metadata, så Facebook, Google Photos m.fl. viser det som 360°.
-4. Se resultatet i den indbyggede 360-viewer (træk for at se rundt, scroll for zoom).
+### Using the app
+1. Choose a panorama folder – or the whole `PANORAMA` folder from the drone's SD card to find all panoramas.
+   You can also drag a folder onto the window. Use the drone's original single images
+   (e.g. `PANORAMA/001_0174/PANO_0001.JPG …`).
+2. Choose type, quality and exposure. The defaults are good.
+3. Press **Stitch**. The result is saved as `<date>_<folder>_<type>.jpg` (by default in `Pictures\PanoStitch`).
+4. Look at the result in the built-in 360° viewer (drag to look around, scroll to zoom).
 
-Mangler der billeder (fx hvis dronen stoppede før tid), bliver de områder sorte.
+If images are missing (e.g. the drone stopped early), those areas are left black.
 
-## Kommandolinje
+### Command line
 ```
-python step2_align.py input/001_0174 --out output/step2
-python step3_blend.py input/001_0174 --cameras output/step2/cameras.json --out output/step3
+python step2_align.py <folder> --out output/step2
+python step3_blend.py <folder> --cameras output/step2/cameras.json --out output/step3
 ```
-Resultat: `output/step3/step3_pano.jpg` (8192×4096).
+`step1_metadata_only.py` places the images from the DJI metadata alone (useful to see how accurate it is).
+Run any script with `--help` for its options.
 
-## Struktur
+### Building the exe
 ```
-input/001_0174/          originalbilleder fra DJI (PANORAMA-mappen på SD-kortet)
+python tools/build_release.py
+```
+Builds `dist/PanoStitch/PanoStitch.exe` with PyInstaller (from `PanoStitch.spec`), adds the third-party
+licenses and a short README, and zips it as `dist/PanoStitch-<version>-win64.zip`.
+
+## How it works
+
+1. **Metadata** – the gimbal yaw/pitch/roll, GPS position and EXIF focal length of every image give a first
+   estimate of where it points (typically 1–3° off).
+2. **Alignment** – SIFT features are matched between overlapping images only. Bundle adjustment then refines
+   the rotation of every image plus a shared focal length and lens distortion, with the metadata as a weak
+   prior. With `--parallax fit` (default) it also estimates how far the drone drifted between shots (up to
+   ~1 m in wind), assuming flat ground `RelativeAltitude` below; this halves the error on the ground close to
+   the drone. Images without usable matches (plain sky) follow their neighbours, and an image that gets an
+   implausibly large correction (usually from matches on moving clouds) has its matches ignored.
+3. **Blending** – exposure is balanced in linear light (keeping the drone's own look on the ground by
+   default), seams are found with a graph cut so they run around cars and buildings, and multi-band blending
+   hides the transitions. For a 360° sphere the blending wraps around at ±180°.
+4. **Finishing** – for a 360° sphere the normal gap above the drone is filled with smooth sky (only if it is
+   the normal gap; larger holes from missing images stay black). Partial panoramas are cropped to the largest
+   fully covered rectangle.
+
+### Project layout
+```
 panostitch/
-  metadata.py            læser DJI XMP (gimbal-vinkler, GPS) + EXIF (brændvidde, eksponering)
-  camera.py              pinhole-kamera, rotationer, parallakse-model (flad jord)
-  projection.py          equirectangular rays, remap-tabeller, feather-vægte
-  features.py            SIFT + matching af nabobilleder (metadata-filter + RANSAC)
-  bundle.py              bundle adjustment: rotation pr. billede, fælles f/k1/k2, evt. kamerapositioner
-  blend.py               gain-udligning, graph-cut-sømme, multi-band blending (wrap-around ved ±180°)
-  zenith.py              udfyldning af hullet i himlen over dronen
-  xmp.py                 GPano 360-metadata i JPEG
-  layout.py              panoramatyper, valg af lærred (projektion/udsnit), beskæring
-  pipeline.py            hele forløbet som biblioteksfunktioner (fremdrift + annullering) – bruges af GUI og scripts
-  imageio.py             billed-I/O der virker med æ/ø/å i stier
-  render.py              enkle previews (feather, sømme, dækning)
-app/
-  main.py                start af programmet, farvetema
-  main_window.py         hovedvindue
-  viewer.py              interaktiv 360-viewer
-  worker.py              kører stitching i baggrunden
-PanoStitch.bat           starter programmet uden konsolvindue
-step1_metadata_only.py   trin 1: placering kun ud fra DJI-metadata
-step2_align.py           trin 2: matching + bundle adjustment -> cameras.json
-step3_blend.py           trin 3: eksponering, sømme, blending -> step3_pano.jpg
-tools/diagnose.py        GPS-drift, fejl pr. billedpar, fejlkort over panoramaet
-tools/compare_crops.py   udsnit af samme område fra flere billeder
-output/                  resultater
+  metadata.py      DJI XMP (gimbal angles, GPS) and EXIF (focal length, exposure)
+  camera.py        pinhole camera, DJI angle convention, ground-plane parallax model
+  features.py      SIFT and matching of overlapping pairs (metadata filter + RANSAC)
+  bundle.py        bundle adjustment
+  layout.py        panorama types, choosing the output canvas, cropping
+  projection.py    output canvases (equirectangular, transverse) and remap tables
+  blend.py         gain compensation, graph-cut seams, wrap-around multi-band blending
+  zenith.py        filling the sky above the drone
+  xmp.py           GPano metadata
+  pipeline.py      the whole pipeline as library calls (progress + cancel), used by the app and the scripts
+  imageio.py       image I/O that works with non-ASCII Windows paths
+  render.py        simple previews for the step scripts
+app/               the desktop app (PySide6): window, 360° viewer, background worker
+tools/             diagnostics, release build, icon generator
 ```
 
-## Koordinatsystem
-- Verden: x = øst, y = op, z = nord. Yaw er kompasretning (0 = nord, +90 = øst), pitch positiv opad.
-- Kamera (OpenCV): x = højre, y = ned, z = frem.
-- DJI's gimbal-vinkler anvendes i rækkefølgen yaw → roll → pitch; positiv roll = højre side ned
-  (verificeret på vidvinkel-panoramaet, hvis sidekolonner har roll ±9,9°).
-- 360°: midten af billedet = startretningen (første billede), eller `--center-yaw`. Kompasretningen gemmes i
-  `GPano:PoseHeadingDegrees`.
-- Delvise panoramaer: lærredet centreres på det dækkede område (`projection.Canvas`); lodrette panoramaer
-  bruger en transvers ramme, så projektionens poler ligger til siderne i stedet for lige under dronen.
+### Conventions
+- World frame: x = east, y = up, z = north. Yaw is the compass heading (0 = north, +90 = east), pitch is
+  positive upwards. Camera frame (OpenCV): x = right, y = down, z = forward.
+- DJI gimbal angles are applied as yaw → roll → pitch; positive roll tips the right side of the image down
+  (verified on the wide-angle panorama, whose side columns have a roll of ±9.9°).
+- A 360° sphere is centred on the start direction (the first image) unless `--center-yaw` is given; the
+  compass heading is stored in `GPano:PoseHeadingDegrees`.
+- Partial panoramas are centred on the covered area. Vertical panoramas use a transverse frame, so the poles
+  of the projection lie to the sides instead of straight below the drone.
 
-## Trin
-1. **Kun metadata** – placerer billederne ud fra DJI's gimbal-vinkler. Fejl på 1–3°.
-2. **Justering** – retter yaw, pitch og roll pr. billede ud fra billedindholdet.
-   - DJI's `GimbalRollDegree` er altid 0, men de reelle roll-fejl er op til ~3°.
-   - `--parallax fit` (standard): dronen flytter sig op til ~1 m under optagelsen. Kamerapositionerne
-     estimeres (med GPS som udgangspunkt), og jorden antages flad `RelativeAltitude` under dronen.
-     Halverer fejlen på jorden tæt på dronen. `--parallax off` slår det fra.
-   - Billeder uden brugbare matches (ren himmel) følger deres naboer. Får et billede en urealistisk
-     rettelse (> `--max-correction`, typisk pga. matches på skyer der flytter sig), ignoreres dets matches.
-3. **Blending**
-   - Gain-udligning i lineært lys; `--anchor ground` (standard) bevarer jordbilledernes DJI-eksponering.
-   - Graph-cut-sømme beregnet i lav opløsning (`--seam-width`), lagt uden om biler/bygninger.
-   - Multi-band blending (`--levels`, standard 9) som wrapper rundt ved ±180°.
-4. **Afslutning** – 360°: hullet over dronen udfyldes med glat himmel (kun hvis det er det normale hul; mangler
-   der billeder, efterlades området sort). Delvise panoramaer beskæres til det største fuldt dækkede rektangel
-   (`--no-crop` beholder de sorte kanter). Billedet gemmes med GPano-metadata, undtagen lodrette panoramaer.
+## License
+
+MIT, see [LICENSE](LICENSE). The Windows build bundles third-party components under their own licenses
+(Qt/PySide6 under LGPL-3.0, OpenCV under Apache-2.0, NumPy/SciPy under BSD, Pillow under MIT-CMU, Python under
+the PSF license); their license texts are included in the release zip.

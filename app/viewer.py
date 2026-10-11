@@ -82,12 +82,12 @@ class PanoViewer(QWidget):
         if self._frame is None:
             painter.setPen(QColor(160, 160, 170))
             painter.drawText(self.rect(), Qt.AlignCenter,
-                             "Intet panorama endnu\n\nStitch et panorama eller åbn et eksisterende 360-billede")
+                             "No panorama yet\n\nStitch a panorama or open an existing 360° image")
             return
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
         painter.drawImage(self.rect(), self._frame)
-        text = (f"Træk for at se rundt · scroll for zoom · dobbeltklik nulstiller      "
-                f"retning {self._yaw % 360:3.0f}°   hældning {self._pitch:+3.0f}°   synsfelt {self._fov:.0f}°")
+        text = (f"Drag to look around · scroll to zoom · double-click to reset      "
+                f"heading {self._yaw % 360:3.0f}°   pitch {self._pitch:+3.0f}°   field of view {self._fov:.0f}°")
         bar_h = painter.fontMetrics().height() + 10
         bar = self.rect().adjusted(0, self.height() - bar_h, 0, 0)
         painter.fillRect(bar, QColor(0, 0, 0, 130))  # keeps the hint readable on bright sky or sand

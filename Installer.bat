@@ -1,20 +1,19 @@
 @echo off
-chcp 65001 >nul
 echo.
-echo  PanoStitch - installation af de pakker programmet skal bruge
-echo  ============================================================
+echo  PanoStitch - installing the packages the program needs
+echo  ======================================================
 echo.
 python -c "import sys" >nul 2>nul
 if errorlevel 1 (
-    echo  Python er ikke installeret.
+    echo  Python is not installed.
     echo.
-    echo  Installer Python 3.13 fra https://www.python.org/downloads/
-    echo  ^(husk at saette kryds ved "Add python.exe to PATH"^)
-    echo  eller koer denne kommando i en terminal:
+    echo  Install Python 3.13 from https://www.python.org/downloads/
+    echo  ^(tick "Add python.exe to PATH" during the installation^)
+    echo  or run this command in a terminal:
     echo.
     echo      winget install Python.Python.3.13
     echo.
-    echo  Koer derefter Installer.bat igen.
+    echo  Then run Installer.bat again.
     echo.
     pause
     exit /b 1
@@ -22,11 +21,11 @@ if errorlevel 1 (
 python -m pip install --upgrade -r "%~dp0requirements.txt"
 if errorlevel 1 (
     echo.
-    echo  Installationen fejlede - se beskeden ovenfor.
+    echo  The installation failed - see the message above.
     pause
     exit /b 1
 )
 echo.
-echo  Faerdig! Start programmet med PanoStitch.bat
+echo  Done! Start the program with PanoStitch.bat
 echo.
 pause

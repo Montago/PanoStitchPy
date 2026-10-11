@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFileDialog, QFormLayout, Q
                                QProgressBar, QPushButton, QSizePolicy, QSplitter, QTabWidget, QToolButton,
                                QVBoxLayout, QWidget)
 
+from panostitch import __version__
 from panostitch.imageio import imread
 from panostitch.metadata import read_xmp
 from panostitch.pipeline import Options, PanoramaSet, find_panorama_sets
@@ -23,20 +24,20 @@ from .viewer import PanoViewer
 from .worker import Job, StitchWorker
 
 QUALITY = [
-    ("Hurtig  –  4096 × 2048", 4096),
+    ("Fast  –  4096 × 2048", 4096),
     ("Standard  –  8192 × 4096", 8192),
-    ("Høj  –  12288 × 6144  (langsom, bruger meget hukommelse)", 12288),
+    ("High  –  12288 × 6144  (slow, uses a lot of memory)", 12288),
 ]
 LIGHT = [
-    ("Bevar dronens lys på jorden", "ground"),
-    ("Balanceret mellem himmel og jord", "all"),
+    ("Keep the drone's exposure on the ground", "ground"),
+    ("Balanced between sky and ground", "all"),
 ]
 TYPES = [
-    ("Automatisk (genkendes ud fra billederne)", "auto"),
-    ("360° kugle  –  33 billeder", "sphere"),
-    ("180° panorama  –  21 billeder", "180"),
-    ("Vidvinkel  –  9 billeder", "wide"),
-    ("Lodret  –  3 billeder", "vertical"),
+    ("Automatic (detected from the images)", "auto"),
+    ("360° sphere  –  33 images", "sphere"),
+    ("180° panorama  –  21 images", "180"),
+    ("Wide angle  –  9 images", "wide"),
+    ("Vertical  –  3 images", "vertical"),
 ]
 VIEW_MAX_WIDTH = 8192  # larger panoramas are shrunk for the on-screen viewer only
 
@@ -54,12 +55,12 @@ class FlatView(QLabel):
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.setStyleSheet("background: #18181c; color: #a0a0aa;")
         self._pixmap: QPixmap | None = None
-        self.setText("Intet panorama endnu")
+        self.setText("No panorama yet")
 
     def set_image(self, bgr: np.ndarray | None) -> None:
         if bgr is None:
             self._pixmap = None
-            self.setText("Intet panorama endnu")
+            self.setText("No panorama yet")
             return
         h, w = bgr.shape[:2]
         f = min(1.0, 4096 / max(h, w))
@@ -80,7 +81,7 @@ class FlatView(QLabel):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PanoStitch – DJI 360° panoramaer")
+        self.setWindowTitle(f"PanoStitch {__version__} – DJI drone panoramas")
         self.resize(1400, 820)
         self.setAcceptDrops(True)
         self.settings = QSettings("PanoStichPy", "PanoStitch")
@@ -107,14 +108,14 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(panel)
 
         # 1. images
-        box1 = QGroupBox("1. Vælg billeder")
+        box1 = QGroupBox("1. Choose images")
         v1 = QVBoxLayout(box1)
-        hint = QLabel("Vælg mappen med et panorama fra dronen – eller hele <b>PANORAMA</b>-mappen på "
-                      "SD-kortet, så findes alle panoramaer. Du kan også trække en mappe ind i vinduet.")
+        hint = QLabel("Choose the folder with a panorama from the drone – or the whole <b>PANORAMA</b> folder on "
+                      "the SD card to find all panoramas. You can also drag a folder onto the window.")
         hint.setWordWrap(True)
         v1.addWidget(hint)
         row = QHBoxLayout()
-        self.btn_folder = QPushButton("Vælg mappe…")
+        self.btn_folder = QPushButton("Choose folder…")
         self.btn_folder.clicked.connect(self.choose_folder)
         row.addWidget(self.btn_folder)
         self.lbl_folder = QLabel("")
@@ -130,7 +131,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(box1)
 
         # 2. settings
-        box2 = QGroupBox("2. Indstillinger")
+        box2 = QGroupBox("2. Settings")
         form = QFormLayout(box2)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.cmb_type = QComboBox()
@@ -138,8 +139,8 @@ class MainWindow(QMainWindow):
         self.cmb_type.setMinimumContentsLength(18)
         for label, _t in TYPES:
             self.cmb_type.addItem(label)
-        self.cmb_type.setToolTip("Hvilken slags panorama dronen har taget. 'Automatisk' genkender det ud fra\n"
-                                 "billedernes vinkler (typen står ved hvert panorama i listen).")
+        self.cmb_type.setToolTip("The kind of panorama the drone took. 'Automatic' detects it from the angles\n"
+                                 "of the images (the type is shown next to each panorama in the list).")
         self.cmb_type.setCurrentIndex(int(self.settings.value("type", 0)))
         self.cmb_type.currentIndexChanged.connect(lambda _i: self._refresh_outputs())
         form.addRow("Type:", self.cmb_type)
@@ -150,22 +151,22 @@ class MainWindow(QMainWindow):
         for label, _w in QUALITY:
             self.cmb_quality.addItem(label)
         self.cmb_quality.setCurrentIndex(int(self.settings.value("quality", 1)))
-        form.addRow("Kvalitet:", self.cmb_quality)
+        form.addRow("Quality:", self.cmb_quality)
         self.cmb_light = QComboBox()
         self.cmb_light.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.cmb_light.setMinimumContentsLength(18)
         for label, _a in LIGHT:
             self.cmb_light.addItem(label)
         self.cmb_light.setCurrentIndex(int(self.settings.value("light", 0)))
-        form.addRow("Lys:", self.cmb_light)
-        self.chk_parallax = QCheckBox("Ret for at dronen flytter sig under optagelsen")
+        form.addRow("Exposure:", self.cmb_light)
+        self.chk_parallax = QCheckBox("Correct for the drone drifting while shooting")
         self.chk_parallax.setChecked(self.settings.value("parallax", "true") == "true")
-        self.chk_parallax.setToolTip("Gør jorden tæt på dronen skarpere. Brug GPS + billederne til at finde ud af,\n"
-                                     "hvor meget dronen har drevet i vinden mellem billederne.")
+        self.chk_parallax.setToolTip("Makes the ground close to the drone sharper. Uses GPS and the images to work out\n"
+                                     "how far the drone drifted in the wind between shots.")
         form.addRow(self.chk_parallax)
-        self.chk_zenith = QCheckBox("Udfyld hullet i himlen over dronen")
+        self.chk_zenith = QCheckBox("Fill in the gap in the sky above the drone")
         self.chk_zenith.setChecked(self.settings.value("zenith", "true") == "true")
-        self.chk_zenith.setToolTip("Dronens kamera kan ikke pege lige op. Hullet fyldes med en glat himmel.")
+        self.chk_zenith.setToolTip("The drone's camera cannot point straight up. The gap is filled with smooth sky (360° only).")
         form.addRow(self.chk_zenith)
         out_row = QHBoxLayout()
         default_out = Path(QStandardPaths.writableLocation(QStandardPaths.PicturesLocation)) / "PanoStitch"
@@ -176,7 +177,7 @@ class MainWindow(QMainWindow):
         btn_out.setText("…")
         btn_out.clicked.connect(self.choose_output)
         out_row.addWidget(btn_out)
-        form.addRow("Gem i:", out_row)
+        form.addRow("Save to:", out_row)
         layout.addWidget(box2)
 
         # 3. run
@@ -188,7 +189,7 @@ class MainWindow(QMainWindow):
         self.btn_run.setStyleSheet("QPushButton { font-weight: bold; font-size: 14px; }")
         self.btn_run.clicked.connect(self.start)
         row.addWidget(self.btn_run, 1)
-        self.btn_cancel = QPushButton("Annullér")
+        self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setMinimumHeight(40)
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self.cancel)
@@ -198,7 +199,7 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 1000)
         self.progress.setTextVisible(False)
         v3.addWidget(self.progress)
-        self.lbl_status = QLabel("Klar")
+        self.lbl_status = QLabel("Ready")
         self.lbl_status.setWordWrap(True)
         v3.addWidget(self.lbl_status)
         self.txt_log = QPlainTextEdit()
@@ -213,10 +214,10 @@ class MainWindow(QMainWindow):
         panel = QWidget()
         v = QVBoxLayout(panel)
         row = QHBoxLayout()
-        btn_open = QPushButton("Åbn panorama…")
+        btn_open = QPushButton("Open panorama…")
         btn_open.clicked.connect(self.open_panorama)
         row.addWidget(btn_open)
-        self.btn_show = QPushButton("Vis i Stifinder")
+        self.btn_show = QPushButton("Show in Explorer")
         self.btn_show.setEnabled(False)
         self.btn_show.clicked.connect(self.show_in_explorer)
         row.addWidget(self.btn_show)
@@ -227,15 +228,15 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.viewer = PanoViewer()
         self.flat = FlatView()
-        self.tabs.addTab(self.viewer, "360°-visning")
-        self.tabs.addTab(self.flat, "Fladt billede")
+        self.tabs.addTab(self.viewer, "360° view")
+        self.tabs.addTab(self.flat, "Flat image")
         v.addWidget(self.tabs, 1)
         return panel
 
     # ------------------------------------------------------------------ folders
     def choose_folder(self) -> None:
         start = self.settings.value("input_folder", "")
-        folder = QFileDialog.getExistingDirectory(self, "Vælg panorama-mappe", start)
+        folder = QFileDialog.getExistingDirectory(self, "Choose panorama folder", start)
         if folder:
             self.load_folder(Path(folder))
 
@@ -243,7 +244,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("input_folder", str(folder))
         self.lbl_folder.setText(str(folder))
         self.list_sets.clear()
-        self.lbl_status.setText("Leder efter panoramaer…")
+        self.lbl_status.setText("Looking for panoramas…")
         self.repaint()
         sets = find_panorama_sets(folder)
         for s in sets:
@@ -254,14 +255,14 @@ class MainWindow(QMainWindow):
             self.list_sets.addItem(item)
         self._refresh_outputs()
         if not sets:
-            self.lbl_status.setText("Fandt ingen DJI-panoramaer i mappen. Vælg mappen med de originale "
-                                    "billeder (fx PANORAMA/001_0174).")
+            self.lbl_status.setText("No DJI panoramas found in the folder. Choose the folder with the original "
+                                    "images (e.g. PANORAMA/001_0174).")
         else:
-            self.lbl_status.setText(f"Fandt {len(sets)} panorama{'er' if len(sets) != 1 else ''}")
+            self.lbl_status.setText(f"Found {len(sets)} panorama{'s' if len(sets) != 1 else ''}")
         self._update_buttons()
 
     def choose_output(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Gem panoramaer i", self.txt_output.text())
+        folder = QFileDialog.getExistingDirectory(self, "Save panoramas to", self.txt_output.text())
         if folder:
             self.txt_output.setText(folder)
             self._refresh_outputs()
@@ -282,7 +283,7 @@ class MainWindow(QMainWindow):
             if out.exists():
                 item.setData(ROLE_OUTPUT, str(out))
                 item.setText("✓ " + s.label)
-                item.setToolTip(f"Allerede stitchet: {out}\nDobbeltklik for at se det")
+                item.setToolTip(f"Already stitched: {out}\nDouble-click to view it")
             else:
                 item.setData(ROLE_OUTPUT, None)
                 item.setText(s.label)
@@ -296,7 +297,7 @@ class MainWindow(QMainWindow):
         running = self._thread is not None
         n = len(self._checked_items())
         self.btn_run.setEnabled(not running and n > 0)
-        self.btn_run.setText("Stitch panorama" if n <= 1 else f"Stitch {n} panoramaer")
+        self.btn_run.setText("Stitch panorama" if n <= 1 else f"Stitch {n} panoramas")
         self.btn_cancel.setEnabled(running)
         for w in (self.btn_folder, self.list_sets, self.cmb_type, self.cmb_quality, self.cmb_light,
                   self.chk_parallax, self.chk_zenith, self.txt_output):
@@ -330,7 +331,7 @@ class MainWindow(QMainWindow):
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            QMessageBox.warning(self, "PanoStitch", f"Kan ikke oprette mappen\n{out_dir}\n\n{e}")
+            QMessageBox.warning(self, "PanoStitch", f"Cannot create the folder\n{out_dir}\n\n{e}")
             return
         for key, value in (("type", self.cmb_type.currentIndex()),
                            ("quality", self.cmb_quality.currentIndex()), ("light", self.cmb_light.currentIndex()),
@@ -358,7 +359,7 @@ class MainWindow(QMainWindow):
     def cancel(self) -> None:
         if self._worker:
             self._worker.cancel()
-            self.lbl_status.setText("Annullerer – venter på at det igangværende trin bliver færdigt…")
+            self.lbl_status.setText("Cancelling – waiting for the current step to finish…")
             self.btn_cancel.setEnabled(False)
 
     def _on_progress(self, frac: float, msg: str) -> None:
@@ -374,7 +375,7 @@ class MainWindow(QMainWindow):
         item = self._job_items[idx]
         item.setData(ROLE_OUTPUT, path)
         item.setText("✓ " + item.data(ROLE_SET).label)
-        item.setToolTip(f"{path}\nDobbeltklik for at se det")
+        item.setToolTip(f"{path}\nDouble-click to view it")
         item.setCheckState(Qt.Unchecked)
         self.show_panorama(Path(path))
 
@@ -382,7 +383,7 @@ class MainWindow(QMainWindow):
         item = self._job_items[idx]
         item.setText("✗ " + item.data(ROLE_SET).label)
         item.setToolTip(message)
-        self.txt_log.appendPlainText(f"FEJL: {message}")
+        self.txt_log.appendPlainText(f"ERROR: {message}")
 
     def _on_finished(self, cancelled: bool) -> None:
         self._thread.quit()
@@ -391,12 +392,12 @@ class MainWindow(QMainWindow):
         self._worker = None
         failed = sum(1 for it in self._job_items if it.text().startswith("✗"))
         if cancelled:
-            self.lbl_status.setText("Annulleret")
+            self.lbl_status.setText("Cancelled")
         elif failed:
-            self.lbl_status.setText(f"Færdig – {failed} panorama{'er' if failed != 1 else ''} fejlede (se loggen)")
+            self.lbl_status.setText(f"Done – {failed} panorama{'s' if failed != 1 else ''} failed (see the log)")
         else:
             self.progress.setValue(1000)
-            self.lbl_status.setText("Færdig")
+            self.lbl_status.setText("Done")
         for it in self._job_items:
             if it.text().startswith("⏳"):
                 it.setText(it.data(ROLE_SET).label)
@@ -404,8 +405,8 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ viewing
     def open_panorama(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Åbn panorama", self.txt_output.text(),
-                                              "Billeder (*.jpg *.jpeg *.png *.tif *.tiff)")
+        path, _ = QFileDialog.getOpenFileName(self, "Open panorama", self.txt_output.text(),
+                                              "Images (*.jpg *.jpeg *.png *.tif *.tiff)")
         if path:
             self.show_panorama(Path(path))
 
@@ -426,7 +427,7 @@ class MainWindow(QMainWindow):
         self.flat.set_image(img)
         self.tabs.setTabEnabled(0, sphere is not None)
         self.tabs.setTabToolTip(0, "" if sphere is not None else
-                                "Dette billede er ikke et 360-panorama (fx et lodret panorama) – se 'Fladt billede'")
+                                "This image is not a 360° panorama (e.g. a vertical panorama) – see 'Flat image'")
         if sphere is None:
             self.tabs.setCurrentIndex(1)
         self._last_output = path
@@ -463,7 +464,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, e) -> None:
         if self._thread is not None:
-            if QMessageBox.question(self, "PanoStitch", "Der stitches stadig. Vil du afbryde og lukke?") \
+            if QMessageBox.question(self, "PanoStitch", "Still stitching. Do you want to stop and close?") \
                     != QMessageBox.Yes:
                 e.ignore()
                 return

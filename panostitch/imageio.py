@@ -11,7 +11,7 @@ def imread(path: Path | str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray:
     data = np.fromfile(str(path), dtype=np.uint8)
     img = cv2.imdecode(data, flags)
     if img is None:
-        raise IOError(f"Kunne ikke læse billedet: {path}")
+        raise IOError(f"Could not read the image: {path}")
     return img
 
 
@@ -19,5 +19,5 @@ def imwrite(path: Path | str, img: np.ndarray, params: list[int] | None = None) 
     ext = Path(path).suffix or ".jpg"
     ok, buf = cv2.imencode(ext, img, params or [])
     if not ok:
-        raise IOError(f"Kunne ikke gemme billedet: {path}")
+        raise IOError(f"Could not save the image: {path}")
     buf.tofile(str(path))

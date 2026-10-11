@@ -50,14 +50,14 @@ class StitchWorker(QObject):
 
             try:
                 out = stitch(job.folder, job.output, self._opt, progress, lambda: self._cancel, self.log.emit)
-                self.log.emit(f"Færdig på {time.time() - t0:.0f} sekunder")
+                self.log.emit(f"Finished in {time.time() - t0:.0f} seconds")
                 self.job_done.emit(idx, str(out))
             except Cancelled:
-                self.log.emit("Annulleret")
+                self.log.emit("Cancelled")
                 cancelled = True
                 break
             except MemoryError:
-                self.job_failed.emit(idx, "Ikke nok hukommelse – prøv en lavere kvalitet")
+                self.job_failed.emit(idx, "Not enough memory – try a lower quality")
             except Exception as e:  # report and carry on with the next panorama
                 self.log.emit(traceback.format_exc())
                 self.job_failed.emit(idx, str(e) or e.__class__.__name__)
