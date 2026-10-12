@@ -3,3 +3,4 @@ numpy>=2.0
 scipy>=1.13
 pillow>=10.0
 PySide6-Essentials>=6.7
+rawpy>=0.24

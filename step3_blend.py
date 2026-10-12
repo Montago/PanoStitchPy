@@ -38,6 +38,12 @@ def main() -> None:
     ap.add_argument("--seams", choices=["graphcut", "voronoi"], default="graphcut")
     ap.add_argument("--levels", type=int, default=9, help="multi-band levels")
     ap.add_argument("--no-gain", action="store_true")
+    ap.add_argument("--gain-strength", type=float, default=0.6,
+                    help="how much of the exposure differences to even out (1 = all, 0 = keep each image's own)")
+    ap.add_argument("--raw-key", type=float, default=0.0,
+                    help="DNG input: log-average display luminance to expose the panorama for "
+                         "(0 = keep the ground at the drone's intended exposure)")
+    ap.add_argument("--no-sun", action="store_true", help="let the seams cut through the sun like anything else")
     ap.add_argument("--anchor", choices=["ground", "all", "none"], default="ground",
                     help="which images keep their as-shot exposure on average (ground = pitch below -10 deg)")
     ap.add_argument("--no-zenith", action="store_true", help="leave the uncovered sky above the drone black")
@@ -49,7 +55,7 @@ def main() -> None:
     shots = read_folder(args.folder)
     cams = load_cameras(args.cameras, shots)
     opt = Options(width=args.width, seam_width=args.seam_width, seams=args.seams, levels=args.levels,
-                  gain=not args.no_gain, anchor=args.anchor, fill_zenith=not args.no_zenith,
+                  gain=not args.no_gain, gain_strength=args.gain_strength, sun=not args.no_sun, raw_key=args.raw_key, anchor=args.anchor, fill_zenith=not args.no_zenith,
                   center_yaw=args.center_yaw, crop=not args.no_crop)
     pano_type = args.type or detect_type([s.gimbal_yaw for s in shots])
     canvas = plan_canvas(cams, pano_type, 360.0 / args.width, args.width)

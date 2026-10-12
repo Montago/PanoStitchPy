@@ -38,10 +38,15 @@ def solve_gains(means: np.ndarray, counts: np.ndarray, sigma_n: float = 0.04, si
     return gains
 
 
-def overlap_stats(warped: list[np.ndarray], valid: list[np.ndarray], clip_lo: float = 0.003, clip_hi: float = 0.93):
-    """Pairwise overlap means/counts from low-res warped linear images (0-1), ignoring clipped pixels."""
+def overlap_stats(warped: list[np.ndarray], valid: list[np.ndarray], clip_lo: float = 0.003, clip_hi: float = 0.93,
+                  saturation: list[float] | None = None):
+    """Pairwise overlap means/counts from low-res warped linear images, ignoring clipped and black pixels.
+
+    clip_lo/clip_hi are relative to each image's saturation level (1.0 for JPEGs)."""
     n = len(warped)
-    usable = [v & (w.max(axis=2) < clip_hi) & (w.min(axis=2) > clip_lo) for w, v in zip(warped, valid)]
+    sat = saturation or [1.0] * n
+    usable = [v & (w.max(axis=2) < clip_hi * s) & (w.min(axis=2) > clip_lo * s)
+              for w, v, s in zip(warped, valid, sat)]
     means = np.zeros((n, n, 3))
     counts = np.zeros((n, n))
     for i in range(n):
@@ -62,14 +67,28 @@ def overlap_stats(warped: list[np.ndarray], valid: list[np.ndarray], clip_lo: fl
 
 
 def find_seams(warped: list[np.ndarray], valid: list[np.ndarray], weight: list[np.ndarray],
-               method: str = "graphcut") -> np.ndarray:
+               method: str = "graphcut", keep: tuple[int, np.ndarray] | None = None,
+               avoid: list[tuple[int, np.ndarray]] = ()) -> np.ndarray:
     """Label image (H, W) int16 at the resolution of the inputs: index of the image used per pixel, -1 = none.
 
     'graphcut' routes seams through areas where the overlapping images agree (colour + gradient cost),
     'voronoi' simply takes the image whose centre is closest. Images are cropped to their bounding box so the
-    graph cut only works on actual overlaps.
+    graph cut only works on actual overlaps. keep = (image, mask) reserves the masked area for that image
+    (which must cover it); the seams then run around it. avoid = [(image, mask), ...] takes the masked area
+    away from that image wherever another image still covers it.
     """
     n = len(warped)
+    valid = list(valid)
+    if keep is not None:
+        k_img, k_mask = keep
+        valid = [v if i == k_img else v & ~k_mask for i, v in enumerate(valid)]
+    for i, mask in avoid:
+        others = np.zeros_like(valid[i])
+        for j, v in enumerate(valid):
+            if j != i:
+                others |= v
+        valid[i] = valid[i] & ~(mask & others)
+    weight = [np.where(v, w, 0) for v, w in zip(valid, weight)]
     H, W = valid[0].shape
     best_w = np.zeros((H, W), np.float32)
     best_i = np.full((H, W), -1, np.int16)
@@ -162,18 +181,31 @@ class MultiBandBlender:
             self.shapes.append(((h + 1) // 2, w // 2 if wrap else (w + 1) // 2))
         self.acc = [np.zeros((h, w, 3), np.float32) for h, w in self.shapes]
         self.wacc = [np.zeros((h, w), np.float32) for h, w in self.shapes]
+        self.free: list[np.ndarray] | None = None  # 1 - reserved area, per level
 
-    def feed(self, img: np.ndarray, mask: np.ndarray) -> None:
-        """img: float32 (H, W, 3), mask: float32 (H, W) in [0, 1]."""
+    def reserve(self, area: np.ndarray) -> None:
+        """Keep an area (H, W, values in [0, 1]) for one image at every level: images fed with reserved=False
+        get no weight there. Plain multi-band blending would still mix the other images' coarse levels into an
+        area that is smaller than the coarsest scale (e.g. the sun's broad glow)."""
+        area = area.astype(np.float32)
+        self.free = [1 - cv2.resize(area, (w, h), interpolation=cv2.INTER_AREA) for h, w in self.shapes]
+
+    def feed(self, img: np.ndarray, mask: np.ndarray, reserved: bool = True) -> None:
+        """img: float32 (H, W, 3), mask: float32 (H, W) in [0, 1]. reserved=False keeps this image out of the
+        area given to reserve()."""
         g = img
         m = mask
+        free = None if reserved else self.free
         for k in range(self.levels):
             g_next = pyr_down(g, self.wrap)
             lap = g - pyr_up(g_next, self.shapes[k], self.wrap)
-            self.acc[k] += lap * m[..., None]
-            self.wacc[k] += m
+            mk = m if free is None else m * free[k]
+            self.acc[k] += lap * mk[..., None]
+            self.wacc[k] += mk
             g = g_next
             m = pyr_down(m, self.wrap)
+        if free is not None:
+            m = m * free[-1]
         self.acc[-1] += g * m[..., None]
         self.wacc[-1] += m
 

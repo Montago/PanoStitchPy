@@ -36,6 +36,8 @@ COMPONENTS = [
     ("scipy", "SciPy, including the bundled OpenBLAS and GCC runtime", "BSD-3-Clause and others",
      "https://github.com/scipy/scipy"),
     ("pillow", "Pillow", "MIT-CMU", "https://github.com/python-pillow/Pillow"),
+    ("rawpy", "rawpy and the bundled LibRaw (raw/DNG decoding)", "rawpy: MIT; LibRaw: LGPL-2.1 or CDDL-1.0",
+     "https://github.com/letmaik/rawpy - LibRaw: https://github.com/LibRaw/LibRaw"),
 ]
 
 LGPL_NOTE = """\
@@ -43,6 +45,8 @@ Qt and Qt for Python (PySide6, shiboken6) are used under the GNU Lesser General 
 (THIRD_PARTY_LICENSES/Qt/LGPL-3.0.txt, which builds on THIRD_PARTY_LICENSES/Qt/GPL-3.0.txt). They are not
 modified. The Qt libraries are separate files in _internal/PySide6 and _internal/shiboken6 and can be replaced
 with compatible versions of your own. The corresponding source code is available from the links above.
+LibRaw (used through rawpy) is used under the GNU Lesser General Public License v2.1 (see
+THIRD_PARTY_LICENSES/rawpy/LICENSE.LibRaw); it is the separate, replaceable file _internal/rawpy/raw_r.dll.
 """
 
 

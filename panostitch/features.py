@@ -11,6 +11,7 @@ import numpy as np
 
 from .camera import Camera
 from .imageio import imread
+from .raw import is_raw, load_normalised
 
 
 @dataclass
@@ -28,6 +29,7 @@ class PairMatches:
     n_ratio: int       # after Lowe ratio test
     n_prior: int       # after metadata-consistency filter
     n_inliers: int     # after RANSAC
+    weight: np.ndarray | None = None  # (M,) per-match weight in bundle adjustment (None = 1)
 
 
 def _cache_key(path: Path) -> str:
@@ -44,8 +46,14 @@ def detect(path: Path, scale: float = 0.5, nfeatures: int = 8000, cache_dir: Pat
         data = np.load(cache)
         return Features(data["pts"], data["desc"])
 
-    gray = imread(path, cv2.IMREAD_GRAYSCALE)
-    small = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    if is_raw(path):  # LibRaw's half-size decode is fast and already at the usual feature scale
+        half = scale <= 0.5
+        gray = cv2.cvtColor(load_normalised(path, half=half), cv2.COLOR_BGR2GRAY)
+        f = scale * (2 if half else 1)
+        small = cv2.resize(gray, (round(gray.shape[1] * f), round(gray.shape[0] * f)), interpolation=cv2.INTER_AREA)
+    else:
+        gray = imread(path, cv2.IMREAD_GRAYSCALE)
+        small = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     # CLAHE lifts texture in dark ground shots and bright sky shots alike
     small = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(small)
     sift = cv2.SIFT_create(nfeatures=nfeatures, contrastThreshold=0.02)

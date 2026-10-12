@@ -32,7 +32,8 @@ def _stack_matches(matches: list[PairMatches]):
     ii = np.concatenate([np.full(len(m.pts_i), m.i) for m in matches])
     jj = np.concatenate([np.full(len(m.pts_j), m.j) for m in matches])
     pid = np.concatenate([np.full(len(m.pts_i), k) for k, m in enumerate(matches)])
-    return ii, jj, pid, np.concatenate([m.pts_i for m in matches]), np.concatenate([m.pts_j for m in matches])
+    wt = np.concatenate([m.weight if m.weight is not None else np.ones(len(m.pts_i)) for m in matches])
+    return ii, jj, pid, np.concatenate([m.pts_i for m in matches]), np.concatenate([m.pts_j for m in matches]), wt
 
 
 def bundle_adjust(cams: list[Camera], matches: list[PairMatches], neighbors: list[tuple[int, int]] = (),
@@ -40,13 +41,16 @@ def bundle_adjust(cams: list[Camera], matches: list[PairMatches], neighbors: lis
                   position_sigma_m: float = 0.3,
                   prior_sigma_deg=(3.0, 3.0, 5.0), neighbor_sigma_deg: float = 1.5, prior_weight: float = 2.0,
                   focal_sigma_rel: float = 0.03, k_sigma: float = 0.1, loss_scale_px: float = 2.0,
-                  outlier_px: float = 10.0, verbose: bool = True) -> BAResult:
+                  outlier_px: float = 10.0, horizons=(), horizon_weight: float = 5.0,
+                  verbose: bool = True) -> BAResult:
     """neighbors: image pairs whose corrections (in the world frame) should be similar. This lets images
     without any matches (plain sky) follow the systematic correction of the images around them.
 
     positions/ground_h: camera positions (n, 3) and ground plane depth; when given, rays below the horizon are
     corrected for the drone's movement between shots (see camera.ground_parallax). With fit_positions the
-    positions are refined as well, with the given ones as prior (sigma position_sigma_m)."""
+    positions are refined as well, with the given ones as prior (sigma position_sigma_m).
+
+    horizons: horizon.HorizonLine objects; their points are kept at the horizon's elevation (levelling)."""
     n = len(cams)
     R0 = np.stack([c.R for c in cams])
     f0, cx, cy = cams[0].focal, cams[0].cx, cams[0].cy
@@ -55,7 +59,11 @@ def bundle_adjust(cams: list[Camera], matches: list[PairMatches], neighbors: lis
     nb_sig = np.radians(neighbor_sigma_deg)
     fit_positions = fit_positions and positions is not None
 
-    ii, jj, pid, Pi, Pj = _stack_matches(matches)
+    ii, jj, pid, Pi, Pj, wt = _stack_matches(matches)
+    hz_img = np.concatenate([np.full(len(h.pts), h.image) for h in horizons]) if horizons else np.zeros(0, int)
+    hz_pts = np.concatenate([h.pts for h in horizons]) if horizons else np.zeros((0, 2))
+    hz_y = np.concatenate([np.full(len(h.pts), np.sin(np.radians(h.elevation_deg))) for h in horizons]) \
+        if horizons else np.zeros(0)
     n_rot = 3 * n + 3                       # rotations + focal, k1, k2
     n_params = n_rot + (3 * n if fit_positions else 0)
 
@@ -74,14 +82,19 @@ def bundle_adjust(cams: list[Camera], matches: list[PairMatches], neighbors: lis
             wj = ground_parallax(wj, pos[jj], ground_h)
         return (wi - wj) * f
 
-    def residuals(x, ii, jj, Pi, Pj):
+    def residuals(x, ii, jj, Pi, Pj, wt):
         omega = x[: 3 * n].reshape(n, 3)
         prior = (omega / sig).ravel() * prior_weight
         intr = np.array([x[3 * n] / focal_sigma_rel, x[3 * n + 1] / k_sigma, x[3 * n + 2] / k_sigma]) * prior_weight
         # exp([w]) R0 == R0 exp([R0^T w]), so R0^T w is the correction expressed in the world frame
         world = np.einsum("nkl,nk->nl", R0, omega)
         smooth = ((world[nb[:, 0]] - world[nb[:, 1]]) / nb_sig).ravel() * prior_weight
-        parts = [match_residuals(x, ii, jj, Pi, Pj).ravel(), prior, intr, smooth]
+        parts = [(match_residuals(x, ii, jj, Pi, Pj) * wt[:, None]).ravel(), prior, intr, smooth]
+        if len(hz_img):
+            _, f, k1, k2, _ = unpack(x)
+            Rs = Rotation.from_rotvec(omega).as_matrix() @ R0
+            w = np.einsum("nk,nkl->nl", unproject_normalized(hz_pts, f, cx, cy, k1, k2), Rs[hz_img])
+            parts.append((w[:, 1] - hz_y) * f * horizon_weight)
         if fit_positions:
             parts.append(x[n_rot:] / position_sigma_m * prior_weight)
         return np.concatenate(parts)
@@ -108,6 +121,12 @@ def bundle_adjust(cams: list[Camera], matches: list[PairMatches], neighbors: lis
             rows.append(n_rows + np.arange(3 * n))
             cols.append(n_rot + np.arange(3 * n))
             n_rows += 3 * n
+        if len(hz_img):
+            hc = np.concatenate([3 * hz_img[:, None] + np.arange(3), np.broadcast_to(3 * n + np.arange(3),
+                                                                                      (len(hz_img), 3))], axis=1)
+            rows.append(np.repeat(n_rows + np.arange(len(hz_img)), 6))
+            cols.append(hc.ravel())
+            n_rows += len(hz_img)
         rows, cols = np.concatenate(rows), np.concatenate(cols)
         return coo_matrix((np.ones(len(rows), np.int8), (rows, cols)), shape=(n_rows, n_params))
 
@@ -123,7 +142,7 @@ def bundle_adjust(cams: list[Camera], matches: list[PairMatches], neighbors: lis
     removed = 0
     for rnd in range(2):
         res = least_squares(residuals, x, jac_sparsity=sparsity(ii, jj), loss="huber", f_scale=loss_scale_px,
-                            x_scale="jac", method="trf", args=(ii, jj, Pi, Pj), max_nfev=200, verbose=0)
+                            x_scale="jac", method="trf", args=(ii, jj, Pi, Pj, wt), max_nfev=200, verbose=0)
         x = res.x
         _, err = pair_rms(x, ii, jj, Pi, Pj, pid)
         if verbose:
@@ -133,7 +152,7 @@ def bundle_adjust(cams: list[Camera], matches: list[PairMatches], neighbors: lis
         if keep.all():
             break
         removed += int((~keep).sum())
-        ii, jj, Pi, Pj, pid = ii[keep], jj[keep], Pi[keep], Pj[keep], pid[keep]
+        ii, jj, Pi, Pj, pid, wt = ii[keep], jj[keep], Pi[keep], Pj[keep], pid[keep], wt[keep]
 
     rms_after, _ = pair_rms(x, ii, jj, Pi, Pj, pid)
     omega, f, k1, k2, pos = unpack(x)

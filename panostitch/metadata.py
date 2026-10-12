@@ -1,6 +1,7 @@
 """Read DJI drone metadata (XMP drone-dji namespace + standard EXIF) from JPEGs."""
 from __future__ import annotations
 
+import datetime as dt
 import math
 import re
 from dataclasses import dataclass
@@ -40,6 +41,10 @@ class ShotInfo:
     flight_roll: float
     relative_altitude: float
     model: str
+    latitude: float = math.nan         # degrees (DJI GPS fields), NaN when missing
+    longitude: float = math.nan
+    taken: dt.datetime | None = None   # capture time, timezone-aware when the file says so
+    baseline_exposure: float = 0.0     # DNG: stops the raw data should be brightened by (see sensor_exposure)
 
     @property
     def name(self) -> str:
@@ -47,8 +52,14 @@ class ShotInfo:
 
     @property
     def exposure(self) -> float:
-        """Relative sensor exposure (proportional to recorded value for a fixed scene radiance)."""
+        """Relative exposure as rendered (proportional to the JPEG's linear value for a fixed scene radiance)."""
         return self.exposure_time * self.iso / (self.f_number ** 2)
+
+    @property
+    def sensor_exposure(self) -> float:
+        """Relative exposure of the raw data. The Air 3 keeps the sensor at base ISO and stores higher ISO
+        settings as digital gain in the DNG's BaselineExposure (ISO 160 -> +0.69 stops) instead of in the data."""
+        return self.exposure / 2.0 ** self.baseline_exposure
 
 
 def read_xmp(path: Path, max_bytes: int = 512 * 1024) -> dict[str, str]:
@@ -71,7 +82,7 @@ def read_shot(path: Path) -> ShotInfo:
         return float(val) if val not in (None, "") else default
 
     with Image.open(path) as im:
-        width, height = im.size
+        width, height = im.size   # for a DNG this is the embedded thumbnail; the real size comes from LibRaw
         exif = im.getexif()
         orientation = int(exif.get(_ORIENTATION, 1))
         sub = exif.get_ifd(_EXIF_IFD)
@@ -79,6 +90,13 @@ def read_shot(path: Path) -> ShotInfo:
     def num(tag: int, default: float = 0.0) -> float:
         val = sub.get(tag)
         return float(val) if val is not None else default
+
+    baseline = 0.0
+    if path.suffix.lower() in _RAW:
+        from .raw import raw_size
+        width, height = raw_size(path)
+        with Image.open(path) as im:
+            baseline = float(im.tag_v2.get(50730, 0.0) or 0.0)   # BaselineExposure
 
     return ShotInfo(
         path=path,
@@ -98,7 +116,18 @@ def read_shot(path: Path) -> ShotInfo:
         flight_roll=dji("FlightRollDegree"),
         relative_altitude=dji("RelativeAltitude"),
         model=xmp.get("tiff:Model", ""),
+        latitude=dji("GpsLatitude", math.nan),
+        longitude=dji("GpsLongitude", math.nan),
+        taken=_parse_time(xmp.get("xmp:CreateDate", "")),
+        baseline_exposure=baseline,
     )
+
+
+def _parse_time(text: str) -> dt.datetime | None:
+    try:
+        return dt.datetime.fromisoformat(text)
+    except ValueError:
+        return None
 
 
 def positions_world(shots: list[ShotInfo]) -> np.ndarray:
@@ -117,6 +146,22 @@ def positions_world(shots: list[ShotInfo]) -> np.ndarray:
     return pos - pos.mean(axis=0)
 
 
+_RAW = (".dng",)
+IMAGE_SUFFIXES = (".jpg", ".jpeg") + _RAW
+
+
+def image_files(folder: Path) -> list[Path]:
+    """The panorama's frames: JPEGs and/or DNGs, preferring the DNG when both exist for a frame."""
+    try:
+        files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES]
+    except OSError:
+        return []
+    by_stem: dict[str, Path] = {}
+    for p in sorted(files):
+        if p.stem not in by_stem or p.suffix.lower() in _RAW:
+            by_stem[p.stem] = p
+    return sorted(by_stem.values())
+
+
 def read_folder(folder: Path) -> list[ShotInfo]:
-    files = sorted(p for p in folder.iterdir() if p.suffix.lower() in (".jpg", ".jpeg"))
-    return [read_shot(p) for p in files]
+    return [read_shot(p) for p in image_files(folder)]

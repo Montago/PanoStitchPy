@@ -477,7 +477,7 @@ class MainWindow(QMainWindow):
         self.btn_save_view.setEnabled(sphere is not None)
         self.tabs.setTabEnabled(0, sphere is not None)
         self.tabs.setTabToolTip(0, "" if sphere is not None else
-                                "This image is not a 360° panorama (e.g. a vertical panorama) – see 'Flat image'")
+                                "This image is not a 360° panorama (e.g. a wide-angle or vertical panorama) – see 'Flat image'")
         if sphere is None:
             self.tabs.setCurrentIndex(1)
         self._last_output = path

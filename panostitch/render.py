@@ -9,6 +9,7 @@ import numpy as np
 
 from .camera import Camera
 from .imageio import imread
+from .raw import is_raw, load_display
 from .projection import build_maps, equirect_rays, feather_weight, world_to_equirect
 
 _JPEG = [cv2.IMWRITE_JPEG_QUALITY, 92]
@@ -52,7 +53,7 @@ def render_all(cams: list[Camera], out_dir: Path, prefix: str, width: int = 6000
 
     t0 = time.time()
     for cam in cams:
-        img = imread(cam.meta.path)
+        img = load_display(cam.meta.path, half=False) if is_raw(cam.meta.path) else imread(cam.meta.path)
         map_x, map_y, valid = build_maps(cam, rays)
         warped = cv2.remap(img, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
         w = feather_weight(cam, map_x, map_y, valid)

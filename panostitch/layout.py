@@ -5,7 +5,7 @@ DJI panorama modes (Air 3). The drone starts from the direction/tilt the pilot p
 other images around that first one:
     sphere    33 images, 8 columns x 4 rows + nadir    -> full 360 x 180 equirectangular
     180       21 images, 7 columns x 3 rows            -> ~250 x 100 degrees, equirectangular, cropped
-    wide       9 images, 3 x 3                         -> ~130 x 110 degrees, equirectangular, cropped
+    wide       9 images, 3 x 3                         -> up to 100 x 80 degrees, rectilinear like the drone, cropped
     vertical   3 images, 1 column                      -> tall image, transverse projection, cropped
 """
 from __future__ import annotations
@@ -88,6 +88,8 @@ def plan_canvas(cams: list[Camera], pano_type: str, deg_per_px: float, sphere_wi
     if len(_columns(yaws)) <= 1:
         center_yaw = math.degrees(math.atan2(np.mean(np.sin(np.radians(yaws))), np.mean(np.cos(np.radians(yaws)))))
 
+    if pano_type == "wide":
+        return _plan_rectilinear(cams, deg_per_px, center_yaw, margin_deg)
     if pano_type == "vertical":
         pitches = [c.euler()[1] for c in cams]
         frame = Canvas("equirect", 360, 720, center_yaw, (max(pitches) + min(pitches)) / 2, True)
@@ -111,6 +113,35 @@ def plan_canvas(cams: list[Camera], pano_type: str, deg_per_px: float, sphere_wi
     lat_bottom = max(-90.0, lat[rows.max()] - step / 2 - margin_deg)
     return Canvas.for_region("equirect", deg_per_px, center_yaw, frame.center_pitch, frame.portrait,
                              lon_left, lon_right, lat_top, lat_bottom)
+
+
+def _plan_rectilinear(cams: list[Camera], deg_per_px: float, center_yaw: float, margin_deg: float,
+                      span_deg: float = 100.0, span_v_deg: float = 80.0, limit_deg: float = 66.0) -> Canvas:
+    """A level, flat image plane (straight lines stay straight, verticals vertical, as in the drone's own wide
+    panoramas, which are about 98 x 78 degrees). Up to span_deg x span_v_deg of what the images cover,
+    centred on it, so a shot looking down keeps more ground; never beyond limit_deg from straight ahead
+    (a flat projection stretches without bound towards 90 degrees)."""
+    frame = Canvas.for_region("rectilinear", 0.0, center_yaw, 0.0, False, -limit_deg, limit_deg, limit_deg,
+                              -limit_deg, width=600)
+    cov = _coverage(cams, frame)
+    # rows/columns that are at least half covered (single tilted image corners do not count)
+    cols = np.where(cov.mean(axis=0) >= 0.5 * cov.mean(axis=0).max())[0]
+    rows = np.where(cov.mean(axis=1) >= 0.5 * cov.mean(axis=1).max())[0]
+    if not cov.any():
+        raise ValueError("The images do not cover any area – are the angles in the metadata valid?")
+    lon, lat = np.degrees(frame.lons()), np.degrees(frame.lats())
+
+    def window(lo: float, hi: float, span: float) -> tuple[float, float]:
+        lo, hi = lo - margin_deg, hi + margin_deg
+        if hi - lo > span:
+            mid = min(max((lo + hi) / 2, -limit_deg + span / 2), limit_deg - span / 2)
+            lo, hi = mid - span / 2, mid + span / 2
+        return max(lo, -limit_deg), min(hi, limit_deg)
+
+    lon_left, lon_right = window(lon[cols.min()], lon[cols.max()], span_deg)
+    lat_bottom, lat_top = window(lat[rows.max()], lat[rows.min()], span_v_deg)
+    return Canvas.for_region("rectilinear", deg_per_px, center_yaw, 0.0, False, lon_left, lon_right, lat_top,
+                             lat_bottom)
 
 
 def largest_filled_rect(mask: np.ndarray, max_side: int = 1200) -> tuple[int, int, int, int]:

@@ -16,6 +16,8 @@ class Canvas:
     The image is computed in a *local* frame looking at (center_yaw, center_pitch):
       kind 'equirect'    : columns linear in local longitude, rows linear in local latitude
       kind 'cylindrical' : columns linear in local longitude, rows linear in tan(local latitude)
+      kind 'rectilinear' : a flat image plane (like one big camera): straight lines stay straight. lon/lat
+                           extents are the angles along the centre row/column; only for spans well below 180
     Normal frames have center_pitch 0 and an upright local frame, so the horizon is a straight line.
     Portrait frames (vertical panoramas) lay the local equator along the vertical great circle through
     (center_yaw, center_pitch) and turn the result 90 degrees, so the image is tall with the sky at the top;
@@ -45,6 +47,12 @@ class Canvas:
         if kind == "cylindrical":
             lat_top, lat_bottom = min(lat_top, 80.0), max(lat_bottom, -80.0)
         span = lon_right - lon_left
+        if kind == "rectilinear":   # deg_per_px holds in the image centre
+            t = lambda a: math.tan(math.radians(a))
+            land_w = width or max(16, int(round((t(lon_right) - t(lon_left)) / t(deg_per_px))))
+            land_h = max(16, int(round(land_w * (t(lat_top) - t(lat_bottom)) / (t(lon_right) - t(lon_left)))))
+            return Canvas(kind, land_w, land_h, center_yaw, center_pitch, False, lon_left, lon_right, lat_top,
+                          lat_bottom)
         land_w = width if width is not None and not portrait else max(16, int(round(span / deg_per_px)))
         if kind == "cylindrical":
             v_span = math.tan(math.radians(lat_top)) - math.tan(math.radians(lat_bottom))
@@ -94,13 +102,16 @@ class Canvas:
         """Local longitude (radians) of each column of the (unturned) image."""
         w, _ = self._land_size()
         t = (np.arange(w, dtype=np.float32) + 0.5) / w
+        if self.kind == "rectilinear":
+            left, right = math.tan(math.radians(self.lon_left)), math.tan(math.radians(self.lon_right))
+            return np.arctan(left + t * (right - left)).astype(np.float32)
         return np.radians(self.lon_left + t * self.lon_span).astype(np.float32)
 
     def lats(self) -> np.ndarray:
         """Local latitude (radians) of each row of the (unturned) image."""
         _, h = self._land_size()
         t = (np.arange(h, dtype=np.float32) + 0.5) / h
-        if self.kind == "cylindrical":
+        if self.kind in ("cylindrical", "rectilinear"):
             top, bottom = math.tan(math.radians(self.lat_top)), math.tan(math.radians(self.lat_bottom))
             return np.arctan(top - t * (top - bottom)).astype(np.float32)
         return np.radians(self.lat_top - t * (self.lat_top - self.lat_bottom)).astype(np.float32)
@@ -108,10 +119,15 @@ class Canvas:
     def rays(self):
         """World-space unit rays (x, y, z), each (height, width) float32."""
         lon, lat = self.lons(), self.lats()
-        cos_lat = np.cos(lat)[:, None]
-        lx = cos_lat * np.sin(lon)[None, :]
-        ly = np.broadcast_to(np.sin(lat)[:, None], lx.shape)
-        lz = cos_lat * np.cos(lon)[None, :]
+        if self.kind == "rectilinear":
+            px, py = np.tan(lon)[None, :], np.tan(lat)[:, None]
+            inv = 1.0 / np.sqrt(px * px + py * py + 1.0)
+            lx, ly, lz = px * inv, py * inv, np.broadcast_to(inv, (len(lat), len(lon)))
+        else:
+            cos_lat = np.cos(lat)[:, None]
+            lx = cos_lat * np.sin(lon)[None, :]
+            ly = np.broadcast_to(np.sin(lat)[:, None], lx.shape)
+            lz = cos_lat * np.cos(lon)[None, :]
         F = self.frame().astype(np.float32)
         out = []
         for r in range(3):
